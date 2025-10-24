@@ -11,18 +11,33 @@ import seaborn as sns
 from STDPNetwork import Net
 # from STDPNetwork import GenerateSTDP, Assign_Hidden_Layer
 
+# -------------------------
+# Device utility
+# -------------------------
+def get_device(prefer: str = "auto") -> torch.device:
+    """Choose device: 'auto', or one of 'cpu','cuda','mps'."""
+    if prefer != "auto":
+        return torch.device(prefer)
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    # MPS support (Apple Silicon) if present
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
 
-def Train(network,dataset,epochs):
+def Train(network,dataset,epochs,device = torch.device("cpu")):
     #Train network
     for epo in range(epochs):
         TrainSpikes = GenerateTrainSpikes(dataset,50)
+        TrainSpikes = TrainSpikes.to(device)
         TrainSpikes = TrainSpikes.to(torch.float)
 
+        print("DEBUG: Device for TrainSpikes:", TrainSpikes.device)
         #Convert each training input into spikes, and append into a list
         a = torch.randperm(network.num_class) #For random order
 
-        input_times = torch.zeros(network.num_inputs) #Determines the most recent input.
-        
+        input_times = torch.zeros(network.num_inputs,device=device) #Determines the most recent input.
+        print("DEBUG: Device for input_times:", input_times.device)
         network.mem1.zero_()
 
         for t in range(TrainSpikes.shape[0]):
@@ -72,18 +87,18 @@ def GenerateSTDP(PosLength,NegLength,Ap):
     return Window
     #Note: using causal, weight dependant STDP rule from: "An Optimized Deep Spiking Neural Network Architecture Without Gradients"
 
-def Assign_Hidden_Layer(network,dataset, word_space = 15,test = False):
+def Assign_Hidden_Layer(network,dataset, word_space = 15,test = False, device = torch.device("cpu")):
     #Determine which neuron is assigned to which keyword in the training set.
     #Assignment run
     SpikeData = []
     for i in range(network.num_class):
             data, label = dataset[i]
-            data_neuro = torch.zeros((int(data[-1][0])+1+word_space,network.num_inputs))
+            data_neuro = torch.zeros((int(data[-1][0])+1+word_space,network.num_inputs),device=device)
             for idx in data: 
                 data_neuro[int(idx[0]),int(idx[1])] = 1
             SpikeData.append((data_neuro,i))
     if test ==False:
-        Recorder = torch.zeros((network.num_class,network.num_class))
+        Recorder = torch.zeros((network.num_class,network.num_class),device=device) #Rows are neurons, columns are classes.
         i = 0
         for data,label in SpikeData:
             for t in range(data.shape[0]):
@@ -95,12 +110,13 @@ def Assign_Hidden_Layer(network,dataset, word_space = 15,test = False):
         vals, idx_classification = torch.max(Recorder,dim=0) #idx_classification is numerical value of label.
         network.idx_classification = idx_classification
     else:
-        conf_matrix = torch.zeros((TestNet.num_class,TestNet.num_class))
+        conf_matrix = torch.zeros((TestNet.num_class,TestNet.num_class)) #Rows are actual labels, columns are predicted labels.
         for data,label  in SpikeData:
             output = torch.zeros(network.num_class) #Record output for classification
             network.mem1.zero_()
             for t in range(data.shape[0]):
                 spk1, mem1 = network.step(data[t,:])
+                spk1 = spk1.detach().cpu().numpy()
                 output += spk1.squeeze()
             #Determine maximum spike count and corresponding class and update conf matrix
             idx = torch.argmax(output)
@@ -118,120 +134,77 @@ def Assign_Hidden_Layer(network,dataset, word_space = 15,test = False):
 
 
 
+if __name__ == "__main__":
+    # Choose device automatically
+    device = get_device("auto")
+    print("Using device:", device)
+
+    ##### Test Set Verification #####
+    f = open('./data/TrainDataset.pckl','rb')
+    TrainSet = pickle.load(f)
+    f.close()
+
+    #Should we train with our noisy datasets? That might be something we should investigate. Also, I do wonder why we're adding fixed levels of noise for one particular seed,
+    #surely it's more rigorous to provide code that adds noise independantly. Something to consider.
+    #TODO: add code that allows dataset to be loaded with appropriate level of noise. Use defined parameters for each level of noise.
+    #For creating multiple test scripts at once
+    p = ['None','Low','High']
+    j = ['None','Low','High']
+    d = ['None','Low','High']
 
 
-
-##### Test Set Verification #####
-f = open('./data/Top50Dataset.pckl','rb')
-TrainSet = pickle.load(f)
-f.close()
-
-#Should we train with our noisy datasets? That might be something we should investigate. Also, I do wonder why we're adding fixed levels of noise for one particular seed,
-#surely it's more rigorous to provide code that adds noise independantly. Something to consider.
-#TODO: add code that allows dataset to be loaded with appropriate level of noise. Use defined parameters for each level of noise.
-#For creating multiple test scripts at once
-p = ['None','Low','High']
-j = ['None','Low','High']
-d = ['None','Low','High']
+    #timesteps between words:
+    word_space = 15
 
 
-#timesteps between words:
-word_space = 15
+    #Network parameters
+    num_channels = 2
+    num_classes = 50
+    num_class = 50 #Number of classification neurons
+
+    TestNet = Net(num_channels,num_class,device=device)
+    TestNet.to(device)
+
+    #Lower initial threshold for spiking activity
+    init_wt = torch.rand_like(TestNet.fc1.weight.detach(),device=device)
+    initthresh = torch.ones_like(TestNet.lif1.threshold.detach(),device=device)
+    with torch.no_grad():
+        TestNet.fc1.weight.copy_(init_wt)
+        TestNet.lif1.threshold.copy_(initthresh)
 
 
-#Network parameters
-num_channels = 2
-num_classes = 50
-num_class = 50 #Number of classification neurons
+    #STDP parameters:
+    Ap = 1
+    NegLength = 15
+    PosLength = 15
+    TestNet.STDP = GenerateSTDP(PosLength,NegLength,Ap).to(device)
+    TestNet.PosLength = 15
+    TestNet.NegLength = 15
 
-TestNet = Net(num_channels,num_class)
-#Lower initial threshold for spiking activity
-init_wt = torch.rand_like(TestNet.fc1.weight.detach())
-initthresh = torch.ones_like(TestNet.lif1.threshold.detach())
-with torch.no_grad():
-    TestNet.fc1.weight.copy_(init_wt)
-    TestNet.lif1.threshold.copy_(initthresh)
+    #Training epochs
+    epochs = 50
 
+    TestNet.PlotWeight('Initial Weights.png')
 
-#STDP parameters:
-Ap = 1
-NegLength = 15
-PosLength = 15
-TestNet.STDP = GenerateSTDP(PosLength,NegLength,Ap)
-TestNet.PosLength = 15
-TestNet.NegLength = 15
-
-#Training epochs
-epochs = 50
+    #Homeostatic regulation parameters
+    TestNet.Ath = 1e-1
+    TestNet.Tau_th = TestNet.Ath/num_class/20 #20 is chosen arbitrarily, should represent average number of timesteps for each input.
+    TestNet.eta = 0.1
 
 
+    TestNet = Train(TestNet,TrainSet,epochs,device)
 
-TestNet.PlotWeight('Initial Weights.png')
+    #Assign classes to the hidden layer
+    Assign_Hidden_Layer(TestNet,TrainSet,test = False,device=device)
 
-#Homeostatic regulation parameters
-TestNet.Ath = 1e-1
-TestNet.Tau_th = TestNet.Ath/num_class/20 #20 is chosen arbitrarily, should represent average number of timesteps for each input.
-TestNet.eta = 0.1
+    # TestNet.idx_classification = idx_classification
 
+    #Re present the training set to the network and calculate classification accuracy
 
-TestNet = Train(TestNet,TrainSet,epochs)
+    Assign_Hidden_Layer(TestNet,TrainSet, test = True,device=device)
 
-#Assign classes to the hidden layer
-Assign_Hidden_Layer(TestNet,TrainSet,test = False)
+    #Save network and network assignment
+    f = open('Network.pckl','wb')
+    pickle.dump(TestNet,f)
+    f.close()
 
-# TestNet.idx_classification = idx_classification
-
-#Re present the training set to the network and calculate classification accuracy
-
-Assign_Hidden_Layer(TestNet,TrainSet, test = True)
-
-#Save network and network assignment
-f = open('Network.pckl','wb')
-pickle.dump(TestNet,f)
-f.close()
-
-
-#Below code was to submit seperate job script
-# for dropout in d:
-#     for jitter in j:
-#         for poisson in p:
-#             dataset_filename = 'Test_Dropout-%s_Jitter-%s_Poisson-%s' %(dropout,jitter,poisson)
-
-#             args = " --network_filename Network.pckl --dataset_filename %s" %(dataset_filename)
-
-#             #Create a shell script so that each test is submitted.
-#             bash_script = """#!/bin/bash -l
-# #Edit this script to suit your purposes
-# #SBATCH --nodes=1
-# #SBATCH --ntasks-per-node=1
-# #SBATCH --cpus-per-task=5
-# #SBATCH --mem=1000G
-# #SBATCH --job-name=Test
-# #SBATCH --time=50:00:00
-# #SBATCH --partition=general
-# #SBATCH --account= #CHOOSE
-# #SBATCH -o "%s"
-# #SBATCH -e "%s"
-# #SBATCH --constraint=epyc3
-# #SBATCH --batch=epyc3
-
-# python TestSTDP.py%s
-
-# """ %(os.path.join(os.getcwd(), 'out' + dataset_filename+'.txt'),
-#         os.path.join(os.getcwd(), 'error' +dataset_filename+'.txt'),
-#         args+'.pckl')#This is to edit the above script.
-
-
-#             myuuid = str(uuid.uuid4())
-#             with open(os.path.join(os.getcwd(), "%s.sh" % myuuid), "w+") as f:
-#                 f.writelines(bash_script)
-
-#             res = subprocess.run("sbatch %s.sh" % myuuid, capture_output=True, shell=True)
-#             print(args)
-#             print(res.stdout.decode())
-#             os.remove(os.path.join(os.getcwd(), "%s.sh" % myuuid))
-#             time.sleep(2)
-            
-
-# Test(TestNet,TestSet,idx_classification)
-#Have all of the testing done with this script, may need to write a bash script to run them all simultaneously.
