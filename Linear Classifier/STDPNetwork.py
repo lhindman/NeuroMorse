@@ -15,7 +15,7 @@ import snntorch as snn
 class Net(nn.Module):
     def __init__(self,num_inputs,num_class):
         super().__init__()
-        self.fc1 = nn.Linear(num_inputs,num_class,bias = False)
+        self.fc1 = nn.Linear(num_inputs,num_class,bias = False) #Linear layer
         self.lif1 = snn.Leaky(beta = 0.95, reset_mechanism='zero',inhibition=True,learn_threshold=True,threshold = torch.ones(num_class))
         self.mem1 =torch.zeros(1,num_class)
         self.num_inputs = num_inputs
@@ -38,7 +38,7 @@ class Net(nn.Module):
     def step(self, x):
 
         with torch.no_grad():
-            cur1 = self.fc1(x) 
+            cur1 = self.fc1(x) #Linear layer
             spk1, self.mem1 = self.lif1(cur1.unsqueeze(0), self.mem1)
 
         return spk1,self.mem1

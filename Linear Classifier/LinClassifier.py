@@ -11,13 +11,10 @@ from STDPNetwork import Net
 
 ### #Create single neuron network for linear regression ###
 
-f = open('./data/Top50Dataset.pckl','rb') #Obviously need to change based on location of running
+f = open('./data/TrainDataset.pckl','rb') #Obviously need to change based on location of running
 Dataset = pickle.load(f)
 f.close()
 
-f = open('./data/Top50Testset.pckl','rb')
-TestSet = pickle.load(f)
-f.close()
 
 num_inputs = 2
 num_class = 1
