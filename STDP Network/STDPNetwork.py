@@ -13,12 +13,11 @@ import snntorch as snn
 
 #Define one layer spiking neural network for linear regression and test set evaluation.
 class Net(nn.Module):
-    def __init__(self,num_inputs,num_class, device = torch.device("cpu")):
+    def __init__(self,num_inputs,num_class):
         super().__init__()
-        self.device = device
         self.fc1 = nn.Linear(num_inputs,num_class,bias = False)
         self.lif1 = snn.Leaky(beta = 0.95, reset_mechanism='zero',inhibition=True,learn_threshold=True,threshold = torch.ones(num_class))
-        self.mem1 =torch.zeros(1,num_class,device=device)
+        self.mem1 =torch.zeros(1,num_class)
         self.num_inputs = num_inputs
         self.num_class = num_class
 
@@ -40,19 +39,14 @@ class Net(nn.Module):
 
         with torch.no_grad():
             cur1 = self.fc1(x) 
-            print("DEBUG: Device for cur1:", cur1.device)
-            print("DEBUG: Device for mem1:", self.mem1.device)
             spk1, self.mem1 = self.lif1(cur1.unsqueeze(0), self.mem1)
 
         return spk1,self.mem1
     def W1_Update(self,delta_t,spk1):
-        vals = torch.where(delta_t>=0,delta_t, torch.tensor(self.PosLength, dtype=torch.long,device=self.device))
+        vals = torch.where(delta_t>=0,delta_t, torch.tensor(self.PosLength, dtype=torch.long))
         vals.clamp_(0,self.PosLength).long()
-        print("DEBUG: Device for vals:", vals.device)
         indices = vals + self.PosLength
-        print("DEBUG: Device for indices:", indices.device)
-        print("DEBUG: Device for self.STDP[1]:", self.STDP[1].device)
-        STDP_w = torch.gather(self.STDP[1],0,torch.tensor(indices,dtype=torch.long,device=self.device)).repeat(self.num_class,1)
+        STDP_w = torch.gather(self.STDP[1],0,torch.tensor(indices,dtype = torch.long)).repeat(self.num_class,1)
         delta_w = self.eta*(STDP_w - self.fc1.weight.detach())*spk1.transpose(0,1)
         NewWeights = self.fc1.weight.detach()+delta_w
         with torch.no_grad():
@@ -60,8 +54,7 @@ class Net(nn.Module):
     def PlotWeight(self,title):
         plt1 = plt.figure()
         plt.title('Receptive field')
-        weights = self.fc1.weight.detach().cpu().numpy()
-        plt.imshow(weights,vmin = 0, vmax = 1, cmap = "hot_r")  
+        plt.imshow(self.fc1.weight.detach(),vmin = 0, vmax = 1, cmap = "hot_r")  
         plt1.savefig(title)
 
 def GenerateSTDP(PosLength,NegLength,Ap):
@@ -87,34 +80,36 @@ def GenerateTrainSpikes(Dataset,num_classes = 50, shuffle = True, word_space = 1
     for i in range(num_classes):
         data, label = Dataset[i]
         data_neuro = torch.zeros((int(data[-1][0])+1+word_space,num_channels))
-    for idx in data: 
-        data_neuro[int(idx[0]),int(idx[1])] = 1
-    SpikeData.append(data_neuro)
+        for idx in data: 
+            data_neuro[int(idx[0]),int(idx[1])] = 1
+        SpikeData.append(data_neuro)
     if shuffle == True:
         random.shuffle(SpikeData)
     return torch.cat(SpikeData,0) #consider removing torch.cat
 
-def GenerateTestSpikes(TestSet, num_channels = 2, device = torch.device("cpu")):
+def GenerateTestSpikes(TestSet, num_channels = 2):
     #Use this to generate the spikes for the test set.
     #compile spike sequence for test dataset
     #Below requires some form of batching or transform to handle more efficiently.
     #Consider if this is even necessary, wouldn't it be possible just to compare with the input each time and save memory?
-    TestNeuro = torch.zeros((int(TestSet[0][-1][0])+1,num_channels), device=device)
-    print("DEBUG: Device for TestNeuro:", TestNeuro.device)
-    print("DEBUG: Device for TestSet:", TestSet[0].device)
+    print("Generating Test Spikes")
+    TestNeuro = torch.zeros((int(TestSet[0][-1][0])+1,num_channels))
     start_time = timeit.default_timer()
     counter = 0
+    total_idx = len(TestSet[0])
     for idx in TestSet[0]:
         TestNeuro[int(idx[0]),int(idx[1])] = 1
         counter +=1
-        if counter % 10000000 == 0:
-            print('Time elapsed: %d, Counter = %d' %(timeit.default_timer() - start_time,counter))
+        if counter % 1000 == 0:
+            print('Time elapsed: %d, Completed = %0.2f%%' %(timeit.default_timer() - start_time,(counter/total_idx)*100))
+    print("Finished Generating Test Spikes")
     return TestNeuro
 
-def Train(network,dataset,epochs,device = torch.device("cpu")):
-    #Train network
+def Train(network,dataset,epochs):
+    #Train network        if t%1000 ==0 & t>0:
+
     for epo in range(epochs):
-        TrainSpikes = GenerateTrainSpikes(dataset,50,device=device)
+        TrainSpikes = GenerateTrainSpikes(dataset,50)
         TrainSpikes = TrainSpikes.to(torch.float)
 
         #Convert each training input into spikes, and append into a list
@@ -167,8 +162,12 @@ def Assign_Hidden_Layer(network,dataset, word_space = 15):
     vals, idx_classification = torch.max(Recorder,dim=0) #idx_classification is numerical value of label.
     return idx_classification
 
-def Test(network,dataset,idx_classification,device = torch.device("cpu")):
+def Test(network,dataset,idx_classification):
     #Test the network
+    # print('Beginning Test Set Evaluation')
+    # print(" The dataset has type: %s" % type(dataset))
+    # print(" The type of the first element is: %s" % type(dataset[0]))
+    # print("THe first elemen is: %s" % dataset[0])
     TestDict = dataset[1]
     TestingEndList = [] #List of list for all end times for each keyword
 
@@ -183,30 +182,31 @@ def Test(network,dataset,idx_classification,device = torch.device("cpu")):
     #Not technically a confusion matrix, just a measure of correct vs incorrect for each class
     conf_matrix = torch.zeros((50,2))
 
-    TestSpikes = GenerateTestSpikes(dataset,device=device)
-    print("DEBUG: Device for TestSpikes:", TestSpikes.device)
+    TestSpikes = GenerateTestSpikes(dataset)
     # TestSpikes = torch.ones((10000,2))
     # TestSpikes[200:300,0] = 1
 
     
-    input_times = torch.zeros(network.num_inputs,device=device) #Determines the most recent input.
-    print("DEBUG: Device for input_times:", input_times.device)
+    input_times = torch.zeros(network.num_inputs)
+    print("Beginning Test Set Evaluation")
     for t in range(TestSpikes.shape[0]):
-            spk1, mem1 = network.step(TestSpikes[t,:])
-            input_times[TestSpikes[t,:]>0] = t
+        spk1, mem1 = network.step(TestSpikes[t,:])
+        input_times[TestSpikes[t,:]>0] = t
 
-            if t%1000000 ==0 & t>0:
-                print('Time Elapsed: %d, t = %d, correct = %i, incorrect = %i' %(timeit.default_timer()-start_time,t,correct_spikes,incorrect_spikes))
+        if t % 1000 == 0:
+            print('Time Elapsed: %d, t = %d, correct = %i, incorrect = %i' %(timeit.default_timer()-start_time,t,correct_spikes,incorrect_spikes))
+            print("Completed = %0.2f%%" %(((t/TestSpikes.shape[0]))*100))
 
-            if torch.sum(spk1)>0:
-                spk1_label = idx_classification[spk1.nonzero()][0,1].item()
-                if t in TestingEndList[spk1_label]:
-                    correct_spikes +=1
-                    conf_matrix[spk1_label,0] +=1
-                else:
-                    incorrect_spikes +=1
-                    conf_matrix[spk1_label,1] +=1
-                    
+        if torch.sum(spk1)>0:
+            spk1_label = idx_classification[spk1.nonzero()][0,1].item()
+            if t in TestingEndList[spk1_label]:
+                correct_spikes +=1
+                conf_matrix[spk1_label,0] +=1
+            else:
+                incorrect_spikes +=1
+                conf_matrix[spk1_label,1] +=1
+        # print("Completed %d/%d timesteps" %(t+1,TestSpikes.shape[0]))
+    print("Test Set Evaluation Complete")
     print('Correct Spikes')
     print(correct_spikes)
     print('Incorrect Spikes')
@@ -223,3 +223,72 @@ def Test(network,dataset,idx_classification,device = torch.device("cpu")):
     plt.savefig('Confusion Matrix.svg') #1st row is correct spikes, 2nd row is incorrect spikes
     plt.close()
 
+# def run(network,dataset)
+    #Consider using above code for further convenience.
+
+
+
+
+
+# ##### Test Set Verification #####
+# f = open('Top50Dataset.pckl','rb')
+# TrainSet = pickle.load(f)
+# f.close()
+
+# #Should we train with our noisy datasets? That might be something we should investigate. Also, I do wonder why we're adding fixed levels of noise for one particular seed,
+# #surely it's more rigorous to provide code that adds noise independantly. Something to consider.
+# #TODO: add code that allows dataset to be loaded with appropriate level of noise. Use defined parameters for each level of noise.
+
+# f = open('Top50Testset.pckl','rb')
+# TestSet = pickle.load(f)
+# f.close()
+# #For now, use pckl files for convenience. Think about using h5 files or other code for easy loading.
+
+# #timesteps between words:
+# word_space = 15
+
+
+# #Network parameters
+# num_channels = 2
+# num_classes = 50
+# num_class = 50 #Number of classification neurons
+
+# TestNet = Net(num_channels,num_class)
+# #Lower initial threshold for spiking activity
+# init_wt = torch.rand_like(TestNet.fc1.weight.detach())
+# initthresh = torch.ones_like(TestNet.lif1.threshold.detach())
+# with torch.no_grad():
+#     TestNet.fc1.weight.copy_(init_wt)
+#     TestNet.lif1.threshold.copy_(initthresh)
+
+
+# #STDP parameters:
+# Ap = 1
+# NegLength = 15
+# PosLength = 15
+# TestNet.STDP = GenerateSTDP(PosLength,NegLength,Ap)
+
+
+# epochs = 50
+
+
+
+# TestNet.PlotWeight('Initial Weights.png')
+
+# #Homeostatic regulation parameters
+# TestNet.Ath = 1e-1
+# TestNet.Tau_th = TestNet.Ath/num_class/20 #20 is chosen arbitrarily, should represent average number of timesteps for each input.
+# TestNet.eta = 0.1
+
+# TestNet = Train(TestNet,TrainSet)
+
+# #Save the network
+
+# idx_classification = Assign_Hidden_Layer(TestNet,TrainSet)
+
+# f = open('Network,Idx.pckl','wb')
+# pickle.dump((TestNet,idx_classification),f)
+# f.close()
+
+
+# Test(TestNet,TestSet,idx_classification)

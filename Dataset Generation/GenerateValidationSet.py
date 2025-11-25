@@ -154,7 +154,7 @@ for idx,word in enumerate(Top50List):
     WordDataset.append((WholeArray,word))
 
 #Remove punctuation from corpus (ignoring identifying keywords with punctuation spike sequences for now)
-with open('./data/Validation/validation.txt', 'r', encoding='utf8') as f:
+with open('./data/magi/Validation/validation.txt', 'r', encoding='utf8') as f:
     corpus = f.read().lower().split()
 
 # Create a translation table
@@ -244,6 +244,6 @@ for i in range(50):
     validation_dict[label][2] = validation_dict[label][1] +data[-1][0] + word_space
 
 #Save array and test_dictionary in python format. Will convert to HDF5 format.
-f = open('./data/Validation/ValidationSet.pckl' ,'wb')
+f = open('./data/magi/Validation/ValidationSet.pckl' ,'wb')
 pickle.dump((ValidationArray,validation_dict),f)
 f.close()

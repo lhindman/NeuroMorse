@@ -11,15 +11,18 @@ import seaborn as sns
 from STDPNetwork import Net
 # from STDPNetwork import GenerateSTDP, Assign_Hidden_Layer
 
+from micronets import NeuroMorseDataset
 
 def Train(network,dataset,epochs):
     #Train network
     for epo in range(epochs):
+        
+
         TrainSpikes = GenerateTrainSpikes(dataset,50)
         TrainSpikes = TrainSpikes.to(torch.float)
 
-        #Convert each training input into spikes, and append into a list
-        #a = torch.randperm(network.num_class) #For random order
+    
+        # a = torch.randperm(network.num_class) #For random order
 
         input_times = torch.zeros(network.num_inputs) #Determines the most recent input.
         
@@ -43,6 +46,7 @@ def Train(network,dataset,epochs):
     network.PlotWeight('Final Weight.png')
     return network
 
+
 def GenerateTrainSpikes(Dataset,num_classes = 50, shuffle = False, word_space = 15,num_channels = 2):
     #Use this to generate the data.
     #Also, should look at test set as well. This code should definitely be updated with some sort of transform and with batching.
@@ -51,10 +55,10 @@ def GenerateTrainSpikes(Dataset,num_classes = 50, shuffle = False, word_space = 
     #Should randomise order for training set.
     for i in range(num_classes):
         data, label = Dataset[i]
-        data_neuro = torch.zeros((int(data[-1][0])+1+word_space,num_channels))
-        for idx in data: 
-            data_neuro[int(idx[0]),int(idx[1])] = 1
-        SpikeData.append(data_neuro)
+        # data_neuro = torch.zeros((int(data[-1][0])+1+word_space,num_channels))
+        # for idx in data: 
+            # data_neuro[int(idx[0]),int(idx[1])] = 1
+        SpikeData.append(data)
     if shuffle == True:
         random.shuffle(SpikeData)
     return torch.cat(SpikeData,0) #consider removing torch.cat
@@ -79,10 +83,10 @@ def Assign_Hidden_Layer(network,dataset, word_space = 15,test = False):
     SpikeData = []
     for i in range(network.num_class):
             data, label = dataset[i]
-            data_neuro = torch.zeros((int(data[-1][0])+1+word_space,network.num_inputs))
-            for idx in data: 
-                data_neuro[int(idx[0]),int(idx[1])] = 1
-            SpikeData.append((data_neuro,i))
+            # data_neuro = torch.zeros((int(data[-1][0])+1+word_space,network.num_inputs))
+            # for idx in data: 
+            #     data_neuro[int(idx[0]),int(idx[1])] = 1
+            SpikeData.append((data,i))
     if test ==False:
         Recorder = torch.zeros((network.num_class,network.num_class))
         i = 0
@@ -123,9 +127,12 @@ def Assign_Hidden_Layer(network,dataset, word_space = 15,test = False):
 
 
 ##### Test Set Verification #####
-f = open('./data/TrainDataset.pckl','rb')
-TrainSet = pickle.load(f)
-f.close()
+# f = open('./data/TrainDataset.pckl','rb')
+# TrainSet = pickle.load(f)
+# f.close()
+
+train_h5_path = "./data/Clean-Train.h5"
+train_ds = NeuroMorseDataset(train_h5_path, dt_us=1)
 
 # Set the seed for reproducibility
 torch.manual_seed(42)
@@ -178,16 +185,16 @@ TestNet.Tau_th = TestNet.Ath/num_class/20 #20 is chosen arbitrarily, should repr
 TestNet.eta = 0.1
 
 
-TestNet = Train(TestNet,TrainSet,epochs)
+TestNet = Train(TestNet,train_ds,epochs)
 
 #Assign classes to the hidden layer
-Assign_Hidden_Layer(TestNet,TrainSet,test = False)
+Assign_Hidden_Layer(TestNet,train_ds,test = False)
 
 # TestNet.idx_classification = idx_classification
 
 #Re present the training set to the network and calculate classification accuracy
 
-Assign_Hidden_Layer(TestNet,TrainSet, test = True)
+Assign_Hidden_Layer(TestNet,train_ds, test = True)
 
 #Save network and network assignment
 f = open('Network.pckl','wb')
