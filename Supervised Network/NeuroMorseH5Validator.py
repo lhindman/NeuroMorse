@@ -7,13 +7,16 @@ from snntorch import surrogate
 import numpy as np
 import matplotlib.pyplot as plt
 import string
-
+from micronets import NeuroMorseDataset
 import os
 import uuid
 import subprocess
 
 seed_value = 42  # Choose any integer value for the seed
 torch.manual_seed(seed_value)
+
+train_h5_path = "./data/Clean-Train.h5"
+train_ds = NeuroMorseDataset(train_h5_path, dt_us=1, test_mode=False)
 
 #Create a Morse code dataset.
 Morse_Dict = {"a":'.-',
@@ -333,13 +336,10 @@ for word in cleaned_test_subset:
 # Determine the maximum length of spike trains
 max_length = max(tensor.shape[0] for tensor in TrainSpikeDataset)
 
-
 # Pad all tensors to max_length
 for i in range(len(TrainSpikeDataset)):
     padding = max_length - TrainSpikeDataset[i].shape[0]
     TrainSpikeDataset[i] = F.pad(TrainSpikeDataset[i], (0, 0, 0, padding), mode='constant', value=0)  # Pad at the end
-
-print("Max length of training spike trains:", max_length)
 
 max_length = max(tensor.shape[0] for tensor in TestSpikeDataset)
 
@@ -358,16 +358,13 @@ labels = torch.tensor(training_labels)  # Shape: [num_words]
 test_labels = torch.tensor(test_labels)
 
 # Create a TensorDataset
-dataset = TensorDataset(inputs, labels)
+# dataset = TensorDataset(inputs, labels)
+
+# Swap in the training dataset from the NeuroMorseDataset hdfh file
+dataset = train_ds
 test_dataset = TensorDataset(test_inputs, test_labels)
 
-# print the first element of the dataset to verify
-# print(dataset[0])
-# print the shape of the first element's data
-# print(dataset[0][0].shape)
-
-
-
+# --- Step 1: Data Preparation ---
 # Parameters
 spike_grad = surrogate.fast_sigmoid(slope=15)
 beta = 0.8
@@ -377,7 +374,7 @@ num_epochs = 2000 #2000
 
 # Create DataLoader
 batch_size = 50
-train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, collate_fn=NeuroMorseDataset.custom_collate_fn)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
 train_losses = []
@@ -476,9 +473,7 @@ test_accuracy = evaluate_model(test_loader)
 print(f"Test accuracy: {test_accuracy:.2f}%")
 
 #Add a loop that goes through all of the noisy datasets. Maybe even have a seperate test script being submitted.
-
-exit()
-
+exit(0)
 d = ['None','Low','High']
 j = ['None','Low','High']
 p = ['None','Low','High']

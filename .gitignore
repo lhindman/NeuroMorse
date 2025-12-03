@@ -1,4 +1,6 @@
-Dataset Generation/*
+*.svg
+*.png
+*.jpg
 *.pyc
 *.h5
 *.pckl

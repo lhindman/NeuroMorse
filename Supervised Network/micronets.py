@@ -40,19 +40,21 @@ class NeuroMorseDataset(Dataset):
                 self.start_times = f["Labels/Start Times"][:]
                 self.end_times = f["Labels/End Times"][:]
 
-        self.num_trials = len(self.labels)
+        self.num_trials = len(self.channels)
 
         # Create integer labels for classification
         self.labels = np.array([lbl.decode('utf-8') if isinstance(lbl, bytes) else str(lbl) for lbl in self.labels])
-        self.label_map = {idx: label for idx, label in enumerate(np.unique(self.labels))}
-        self.reverse_label_map = {label: idx for idx, label in enumerate(np.unique(self.labels))}
+        self.label_map = {idx: label for idx, label in enumerate(self.labels)}
+
 
     def __len__(self):
         return self.num_trials
 
     def __getitem__(self, idx):
         string_label = self.labels[idx]
-        integer_label = self.reverse_label_map[string_label]
+        integer_label = idx  # since integer_labels are unique per trial
+        
+        # print("Idx:", idx, "String label:", string_label, "-> Integer label:", integer_label)
 
         spike_times = np.array(self.times[idx]).astype(int)
         spike_channels = np.array(self.channels[idx]).astype(int)
@@ -67,7 +69,7 @@ class NeuroMorseDataset(Dataset):
         spike_train[(spikes_c1 // self.dt_us).astype(int), 1] = 1.0
         # print("Spike train shape:", spike_train.shape)
 
-        return torch.tensor(spike_train), integer_label
+        return torch.tensor(spike_train, dtype=torch.float32), integer_label
     
     def get_test_times(self, integer_label):
         """" Returns the start times and end times for a given integer class label. """
@@ -94,24 +96,24 @@ class NeuroMorseDataset(Dataset):
         
         
         # Find the maximum sequence length in the current batch
-        max_train_length = max([spike_train.shape[1] for spike_train in spike_trains])
-        print("Max length in batch:", max_train_length)
+        max_train_length = max([spike_train.shape[0] for spike_train in spike_trains])
+        # print("Max length in batch:", max_train_length)
 
         # Pad each sequence to the maximum length at the beginning
         padded_spike_trains = []
         for spike_train in spike_trains:
-            padding_needed = max_train_length - spike_train.shape[1]
+            padding_needed = max_train_length - spike_train.shape[0]
             # Create a padding tensor of zeros (or any desired padding value)
-            print("Padding needed:", padding_needed)
-            print("Spike train shape:", spike_train.shape)
-            padding = np.zeros((spike_train.shape[0], padding_needed))
-            print("Padding shape:", padding.shape)
+            # print("Padding needed:", padding_needed)
+            # print("Spike train shape:", spike_train.shape)
+            padding = np.zeros((padding_needed, spike_train.shape[1]))
+            # print("Padding shape:", padding.shape)
             # Concatenate the padding at the beginning of the sequence
-            padded_spike_train = np.concatenate((padding, spike_train), axis=1)
+            # padded_spike_train = np.concatenate((padding, spike_train), axis=1)
             
             # Append the padding at the end of the sequnence
-            # padded_spike_train = np.concatenate((spike_train, padding), axis=1)
-            padded_spike_train = torch.tensor(padded_spike_train)
+            padded_spike_train = np.concatenate((spike_train, padding), axis=0)
+            padded_spike_train = torch.tensor(padded_spike_train, dtype=torch.float32)
             
             padded_spike_trains.append((padded_spike_train))
         # Stack the padded sequences into a single tensor
